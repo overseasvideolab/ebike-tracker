@@ -3,11 +3,22 @@ import pandas as pd
 import requests
 import plotly.express as px
 import datetime
+import calendar
 
-st.set_page_config(layout="wide", page_title="My E-Bike Pro Dashboard")
-st.title("🚴‍♂️ E-Bike Analytics Engine")
+st.set_page_config(layout="wide", page_title="Ebike Analytics Engine")
 
-# 1. Fetch Credentials
+# --- APP HEADER ---
+st.title("🚴‍♂️ Ebike Analytics Engine")
+
+today = datetime.date.today()
+current_year = str(today.year)
+current_month_num = today.month
+current_month_name = today.strftime('%B')
+current_day = today.day
+
+st.subheader(f"Current: {current_month_name} {current_year}")
+
+# --- 1. FETCH CREDENTIALS ---
 try:
     API_KEY = st.secrets["RWGPS_API_KEY"]
     AUTH_TOKEN = st.secrets["RWGPS_AUTH_TOKEN"]
@@ -15,7 +26,7 @@ except KeyError:
     st.error("🔒 API keys missing! Please add them to Streamlit Secrets.")
     st.stop() 
 
-# 2. Fetch Data (UPGRADED: Extreme Memory Filter)
+# --- 2. FETCH RIDE DATA (With Memory Filter to prevent crashes!) ---
 @st.cache_data(ttl=3600) 
 def fetch_lightweight_rides(api_key, auth_token):
     all_rides_filtered = []
@@ -39,112 +50,149 @@ def fetch_lightweight_rides(api_key, auth_token):
         if first_ride_id in seen_ride_ids:
             break 
             
-        # --- THE MEMORY FILTER ---
         for r in results:
             ride_id = r.get('id')
             seen_ride_ids.add(ride_id)
             
-            # We ONLY save the tiny bits of text we need, throwing away the heavy map data
-            date_val = r.get('departed_at', r.get('created_at'))
-            dist_val = r.get('distance', 0)
-            
+            # Memory filter: Keep only the tiny text data
             lightweight_ride = {
                 'id': ride_id,
-                'departed_at': date_val,
-                'distance': dist_val
+                'departed_at': r.get('departed_at', r.get('created_at')),
+                'distance': r.get('distance', 0)
             }
             all_rides_filtered.append(lightweight_ride)
             
         if len(results) < limit:
             break
-            
         offset += limit 
             
     return all_rides_filtered
 
-# 3. Process Data & Build Dashboard
-# We moved the spinner OUTSIDE the cache function to prevent memory leaks!
-with st.spinner("Crunching your historical data..."):
-    raw_data = fetch_lightweight_rides(API_KEY, AUTH_TOKEN)
+# --- 3. FETCH WEATHER DATA (Free Open-Meteo API for Toronto) ---
+@st.cache_data(ttl=3600)
+def fetch_weather():
+    # Coordinates for Toronto, ON
+    url = "https://api.open-meteo.com/v1/forecast?latitude=43.7001&longitude=-79.4163&daily=weathercode,temperature_2m_max&timezone=America%2FNew_York"
+    resp = requests.get(url)
+    if resp.status_code == 200:
+        return resp.json()['daily']
+    return None
 
+def get_weather_condition(code):
+    # Mapping standard WMO weather codes to simple terms
+    if code <= 3: return "Sunny / Clear"
+    if code in [45, 48]: return "Foggy"
+    if code in [51, 53, 55, 61, 63, 65, 80, 81, 82]: return "Rain"
+    if code in [71, 73, 75, 77, 85, 86]: return "Snow"
+    if code in [95, 96, 99]: return "Storm"
+    return "Cloudy"
+
+with st.spinner("Crunching your data..."):
+    raw_data = fetch_lightweight_rides(API_KEY, AUTH_TOKEN)
+    weather_data = fetch_weather()
+
+# --- 4. PROCESS RIDE DATA ---
 if raw_data and len(raw_data) > 0:
     df = pd.DataFrame(raw_data)
     
     # Clean data
     df['Distance_km'] = df['distance'] / 1000.0
     df['Date'] = pd.to_datetime(df['departed_at'])
-    
-    # Create time markers
     df['Just_Date'] = df['Date'].dt.date 
     df['Year'] = df['Date'].dt.year.astype(str)
     df['Month_Num'] = df['Date'].dt.month
-    df['Month_Name'] = df['Date'].dt.strftime('%B')
+    df['Day_Num'] = df['Date'].dt.day
     df['Month_Year'] = df['Date'].dt.to_period('M').astype(str)
-    df = df.sort_values(by='Date')
-
-    # Current time setup
-    today = datetime.date.today()
-    current_year = str(today.year)
-    current_month_num = today.month
-    current_month_name = today.strftime('%B')
-
+    
+    # Time logic for your custom fractions
+    days_in_current_month = calendar.monthrange(today.year, today.month)[1]
+    days_passed_this_year = today.timetuple().tm_yday
+    
     this_month_data = df[(df['Year'] == current_year) & (df['Month_Num'] == current_month_num)]
     this_year_data = df[df['Year'] == current_year]
 
-    # --- KPI METRICS ---
-    st.subheader(f"🎯 Current Focus: {current_month_name} {current_year}")
+    # --- TOP KPI METRICS ROW ---
+    st.divider()
     col1, col2, col3, col4 = st.columns(4)
     
-    days_ridden_month = this_month_data['Just_Date'].nunique()
-    days_ridden_year = this_year_data['Just_Date'].nunique()
+    month_dist = this_month_data['Distance_km'].sum()
+    month_days = this_month_data['Just_Date'].nunique()
+    year_dist = this_year_data['Distance_km'].sum()
+    year_days = this_year_data['Just_Date'].nunique()
     
-    col1.metric(f"Distance in {current_month_name}", f"{this_month_data['Distance_km'].sum():.1f} km")
-    col2.metric(f"Days Ridden in {current_month_name}", days_ridden_month)
-    col3.metric("Total Distance This Year", f"{this_year_data['Distance_km'].sum():.1f} km")
-    col4.metric("Total Days Ridden This Year", days_ridden_year)
+    col1.metric(f"Distance in {current_month_name}", f"{month_dist:,.0f} km")
+    col2.metric(f"Days Ridden in {current_month_name}", f"{month_days} / {days_in_current_month} Days")
+    col3.metric(f"Distance in {current_year}", f"{year_dist:,.0f} km")
+    col4.metric(f"Days Ridden in {current_year}", f"{year_days} / {days_passed_this_year} Days")
 
     st.divider()
 
-    # --- YEAR OVER YEAR (YoY) COMPARISON ---
-    st.subheader(f"📊 Year-Over-Year: {current_month_name} Comparison")
-    
-    yoy_data = df[df['Month_Num'] == current_month_num]
-    if not yoy_data.empty:
-        yoy_stats = yoy_data.groupby('Year').agg(
-            Total_Distance=('Distance_km', 'sum'),
-            Days_Ridden=('Just_Date', 'nunique')
-        ).reset_index()
-
-        chart_col1, chart_col2 = st.columns(2)
-        
-        with chart_col1:
-            fig_yoy_dist = px.bar(yoy_stats, x='Year', y='Total_Distance', 
-                                  title=f"{current_month_name} Total Distance",
-                                  text_auto='.1f', color_discrete_sequence=['#FF4B4B'])
-            fig_yoy_dist.update_xaxes(type='category', title_text='Year')
-            st.plotly_chart(fig_yoy_dist, use_container_width=True)
+    # --- WEATHER FORECAST ROW ---
+    st.subheader("⛅ Weather for next 7 days")
+    if weather_data:
+        weather_cols = st.columns(7)
+        for i in range(7):
+            # Parse weather data for each day
+            date_str = weather_data['time'][i]
+            day_obj = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+            day_name = day_obj.strftime("%a") # Mon, Tue, etc.
             
-        with chart_col2:
-            fig_yoy_days = px.bar(yoy_stats, x='Year', y='Days_Ridden', 
-                                  title=f"{current_month_name} Days Ridden",
-                                  text_auto=True, color_discrete_sequence=['#1f77b4'])
-            fig_yoy_days.update_xaxes(type='category', title_text='Year')
-            st.plotly_chart(fig_yoy_days, use_container_width=True)
+            temp = weather_data['temperature_2m_max'][i]
+            code = weather_data['weathercode'][i]
+            condition = get_weather_condition(code)
+            
+            # Custom logic: If it's raining/snowing or below 2°C, say NO
+            good_to_ride = "✅ Yes"
+            if "Rain" in condition or "Snow" in condition or "Storm" in condition or temp < 2.0:
+                good_to_ride = "❌ NO"
+                
+            with weather_cols[i]:
+                st.markdown(f"**{day_name}**")
+                st.markdown(f"**{temp}°C**")
+                st.write(f"*{condition}*")
+                st.write("**Good to ride?**")
+                st.write(good_to_ride)
     else:
-        st.write(f"No historical data found for {current_month_name}.")
+        st.write("Weather data temporarily unavailable.")
+
+    st.divider()
+
+    # --- YEAR OVER YEAR (By this date) ---
+    st.subheader(f"📅 Year by Year by this date ({current_month_name} 1st to {current_day}th)")
+    
+    # Filter data to ONLY include the current month, and ONLY up to today's date
+    yoy_data = df[(df['Month_Num'] == current_month_num) & (df['Day_Num'] <= current_day)]
+    
+    if not yoy_data.empty:
+        yoy_stats = yoy_data.groupby('Year')['Distance_km'].sum().reset_index()
+        
+        col_chart, col_table = st.columns([2, 1])
+        
+        with col_chart:
+            fig_yoy = px.bar(yoy_stats, x='Year', y='Distance_km', 
+                             text_auto='.0f', color_discrete_sequence=['#1f77b4'])
+            fig_yoy.update_xaxes(type='category', title_text='')
+            fig_yoy.update_yaxes(title_text='Distance (km)')
+            st.plotly_chart(fig_yoy, use_container_width=True)
+            
+        with col_table:
+            # Format table to match sketch
+            yoy_stats['Distance_km'] = yoy_stats['Distance_km'].apply(lambda x: f"{x:,.0f} km")
+            yoy_stats = yoy_stats.rename(columns={'Year': f'{current_month_name}', 'Distance_km': 'Distance'})
+            st.dataframe(yoy_stats, hide_index=True, use_container_width=True)
+    else:
+        st.write(f"No historical data found for {current_month_name} yet.")
 
     st.divider()
 
     # --- ALL-TIME MACRO TREND ---
-    st.subheader("📈 All-Time Monthly Trend (Entire History)")
+    st.subheader("📈 All-Time Monthly Trend")
     all_time_stats = df.groupby('Month_Year')['Distance_km'].sum().reset_index()
     
     fig_all = px.bar(all_time_stats, x='Month_Year', y='Distance_km', 
-                     title="Kilometers Ridden per Month",
-                     labels={'Month_Year': 'Month', 'Distance_km': 'Distance (km)'},
-                     text_auto='.1f') 
-    
-    fig_all.update_xaxes(type='category', tickangle=-45)
+                     text_auto='.0f', color_discrete_sequence=['#1f77b4']) 
+    fig_all.update_xaxes(type='category', tickangle=-45, title_text='')
+    fig_all.update_yaxes(title_text='Distance (km)')
     st.plotly_chart(fig_all, use_container_width=True)
 
 else:
