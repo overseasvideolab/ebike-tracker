@@ -1,85 +1,99 @@
 import streamlit as st
 import pandas as pd
 import requests
+import plotly.express as px # Our new, powerful charting library!
 
-# 1. App Header
-st.title("🚴‍♂️ My E-Bike Ride Tracker")
-st.write("Live data pulled directly from your Ride with GPS account!")
+st.set_page_config(layout="wide") # Makes the app use the full width of your screen
+st.title("🚴‍♂️ My E-Bike Pro Dashboard")
 
-# 2. Securely fetch your API credentials
+# 1. Fetch Credentials
 try:
     API_KEY = st.secrets["RWGPS_API_KEY"]
     AUTH_TOKEN = st.secrets["RWGPS_AUTH_TOKEN"]
 except KeyError:
-    st.error("🔒 API keys not found! Please make sure they are in your Streamlit Secrets.")
+    st.error("🔒 API keys not found in Streamlit Secrets.")
     st.stop() 
 
-# 3. Function to fetch data from the internet
-@st.cache_data(ttl=3600) # Memorize this for 1 hour so the app loads instantly
+# 2. Fetch Data (Upgraded to pull MORE data)
+@st.cache_data(ttl=3600) 
 def fetch_rides(api_key, auth_token):
     url = "https://ridewithgps.com/api/v1/trips.json"
-    response = requests.get(url, auth=(api_key, auth_token))
+    # We add 'limit' and 'per_page' to politely ask the API for a much larger chunk of history
+    response = requests.get(url, auth=(api_key, auth_token), params={"limit": 200, "per_page": 200})
     
     if response.status_code == 200:
         return response.json()
     else:
-        st.error(f"Failed to fetch data. Error code: {response.status_code}")
+        st.error(f"Failed to fetch data. Error: {response.status_code}")
         return None
 
-# 4. Ask Ride with GPS for the data
 raw_data = fetch_rides(API_KEY, AUTH_TOKEN)
 
-# 5. Process the data and build the dashboard
+# 3. Process Data
 if raw_data is not None:
-    
-    # --- SMART SORTING ---
-    # APIs can be tricky, so we check exactly how they sent the list of rides
     rides_list = []
     if isinstance(raw_data, list):
         rides_list = raw_data
     elif isinstance(raw_data, dict):
-        if 'results' in raw_data:
-            rides_list = raw_data['results']
-        elif 'trips' in raw_data:
-            rides_list = raw_data['trips']
-        else:
-            # If we don't recognize the format, show the raw data instead of a blank screen!
-            st.warning("Data received, but the format is unexpected. Here is the raw data:")
-            st.json(raw_data)
-            st.stop()
+        rides_list = raw_data.get('results', raw_data.get('trips', []))
 
-    # --- DASHBOARD CREATION ---
     if len(rides_list) > 0:
-        # Convert the raw list into a Pandas spreadsheet format
         df = pd.DataFrame(rides_list)
         
-        # Ride with GPS sends distance in meters, so we divide by 1000 for km
-        if 'distance' in df.columns:
-            df['Distance_km'] = df['distance'] / 1000.0
-        else:
-            df['Distance_km'] = 0 # Fallback if distance is missing
-            
-        # Figure out which column has the date (usually departed_at or created_at)
+        # Calculate Kilometers
+        df['Distance_km'] = df.get('distance', 0) / 1000.0
+        
+        # Look for elevation data (usually provided in meters)
+        df['Elevation_m'] = df.get('elevation_gain', 0)
+        
+        # Clean up Dates
         date_col = 'departed_at' if 'departed_at' in df.columns else 'created_at'
         df['Date'] = pd.to_datetime(df[date_col])
-        
-        # Group by Month and Year
         df['Month'] = df['Date'].dt.to_period('M').astype(str)
-        monthly_stats = df.groupby('Month')['Distance_km'].sum().reset_index()
         
-        # Visuals
+        # Sort by date so our trends flow chronologically
+        df = df.sort_values(by='Date')
+        
+        # --- ADVANCED STATS & ANALYSIS ---
         st.divider()
-        col1, col2 = st.columns(2)
+        st.subheader("🏆 All-Time Personal Bests & Averages")
         
         total_dist = df['Distance_km'].sum()
-        col1.metric("Total All-Time Distance", f"{total_dist:,.1f} km")
-        col2.metric("Total Rides Logged", len(df))
+        longest_ride = df['Distance_km'].max()
+        avg_ride = df['Distance_km'].mean()
+        total_elev = df['Elevation_m'].sum()
         
-        st.subheader("📊 Distance by Month")
-        st.bar_chart(data=monthly_stats, x='Month', y='Distance_km')
+        # Create 4 columns for our big metrics
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total Distance", f"{total_dist:,.1f} km")
+        m2.metric("Longest Single Ride", f"{longest_ride:,.1f} km")
+        m3.metric("Average Ride Length", f"{avg_ride:,.1f} km")
+        m4.metric("Total Elevation Climbed", f"{total_elev:,.0f} m")
+
+        # --- INTERACTIVE CHARTS ---
+        st.divider()
+        col_chart1, col_chart2 = st.columns(2)
         
-        with st.expander("Click here to view the raw data table"):
-            st.dataframe(df)
+        with col_chart1:
+            st.subheader("📅 Monthly Distance Breakdown")
+            monthly_stats = df.groupby('Month')['Distance_km'].sum().reset_index()
+            # Plotly creates a bar chart with the numbers printed directly on the bars (text_auto)
+            fig_bar = px.bar(monthly_stats, x='Month', y='Distance_km', 
+                             text_auto='.1f', 
+                             labels={'Distance_km': 'Distance (km)', 'Month': 'Month'},
+                             color_discrete_sequence=['#FF4B4B'])
+            st.plotly_chart(fig_bar, use_container_width=True)
             
+        with col_chart2:
+            st.subheader("📈 Cumulative Distance Trend")
+            # Calculate how your total distance grows over time
+            df['Cumulative_Distance'] = df['Distance_km'].cumsum()
+            fig_line = px.line(df, x='Date', y='Cumulative_Distance', 
+                               labels={'Cumulative_Distance': 'Total km Ridden', 'Date': 'Date'},
+                               color_discrete_sequence=['#1f77b4'])
+            # Fill the area under the line for a cool visual effect
+            fig_line.update_traces(fill='tozeroy') 
+            st.plotly_chart(fig_line, use_container_width=True)
+
     else:
-        st.info("No rides found in your account yet! Go for a ride!")
+        st.info("No rides found in the data package.")
