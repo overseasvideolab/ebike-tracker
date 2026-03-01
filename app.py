@@ -1,63 +1,60 @@
 import streamlit as st
 import pandas as pd
-import requests
 
+# 1. App Header
 st.title("🚴‍♂️ My E-Bike Ride Tracker")
-st.write("Automatically pulling your latest rides from Ride with GPS!")
+st.write("Upload your Ride with GPS spreadsheet to see your stats!")
 
-# 1. Securely fetch your API credentials from Streamlit Secrets
-try:
-    API_KEY = st.secrets["RWGPS_API_KEY"]
-    AUTH_TOKEN = st.secrets["RWGPS_AUTH_TOKEN"]
-except KeyError:
-    st.error("🔒 API keys not found! Please add them to Streamlit Secrets.")
-    st.stop() # Stops the app from running further and crashing
+# 2. File Uploader
+uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
 
-# 2. Function to securely fetch data
-@st.cache_data(ttl=3600) # This caches the data for 1 hour so the app loads faster
-def fetch_rides(api_key, auth_token):
-    url = "https://ridewithgps.com/api/v1/trips.json"
-    # Send a request to the API proving who we are
-    response = requests.get(url, auth=(api_key, auth_token))
+# 3. Process the file only IF one is uploaded
+if uploaded_file is not None:
+    # Read the data
+    df = pd.read_csv(uploaded_file)
     
-    if response.status_code == 200:
-        return response.json()
-    else:
-        st.error(f"Failed to fetch data. Error code: {response.status_code}")
-        return None
-
-# 3. Load the data
-data = fetch_rides(API_KEY, AUTH_TOKEN)
-
-# 4. Process and display the data
-if data and 'results' in data:
-    rides = data['results']
+    st.success("File uploaded successfully!")
     
-    if len(rides) > 0:
-        # Convert raw JSON data into a Pandas data table
-        df = pd.DataFrame(rides)
+    # Show a quick preview of the raw data
+    with st.expander("Click here to peek at your raw data"):
+        st.dataframe(df.head())
+
+    # --- DATA PROCESSING ---
+    # Ride with GPS CSVs usually have 'Date' and 'Distance' columns.
+    # (Distance might be 'Distance (km)' or 'Distance (mi)', we will look for the word 'Distance')
+    
+    # Find the column that contains the word "Distance"
+    distance_col = [col for col in df.columns if 'Distance' in col]
+    
+    if 'Date' in df.columns and distance_col:
+        dist_name = distance_col[0] # Grab the exact name of the distance column
         
-        # --- DATA CLEANUP ---
-        # Convert dates and calculate kilometers
-        df['Date'] = pd.to_datetime(df['departed_at'])
-        df['Distance_km'] = df['distance'] / 1000.0
+        # Convert the Date column to a proper time format
+        df['Date'] = pd.to_datetime(df['Date'])
         
-        # Group by month
-        df['Month-Year'] = df['Date'].dt.to_period('M').astype(str)
-        monthly_stats = df.groupby('Month-Year')['Distance_km'].sum().reset_index()
+        # Create a Month-Year column for grouping
+        df['Month'] = df['Date'].dt.to_period('M').astype(str)
         
+        # Calculate monthly totals
+        monthly_stats = df.groupby('Month')[dist_name].sum().reset_index()
+
         # --- DASHBOARD VISUALS ---
-        # 1. Big number metrics
-        total_km = df['Distance_km'].sum()
+        st.divider() # Adds a nice horizontal line
+        
+        # Big Numbers
+        total_dist = df[dist_name].sum()
         total_rides = len(df)
         
         col1, col2 = st.columns(2)
-        col1.metric("Total All-Time Distance", f"{total_km:.2f} km")
-        col2.metric("Total Rides", f"{total_rides}")
+        col1.metric(label="Total Distance", value=f"{total_dist:,.1f}")
+        col2.metric(label="Total Rides", value=total_rides)
         
-        # 2. The interactive chart
-        st.subheader("📊 Total Distance by Month (km)")
-        st.bar_chart(data=monthly_stats, x='Month-Year', y='Distance_km')
+        # Chart
+        st.subheader("📊 Distance by Month")
+        st.bar_chart(data=monthly_stats, x='Month', y=dist_name)
         
     else:
-        st.info("No rides found in your account yet.")
+        st.error("Uh oh! We couldn't find a 'Date' or 'Distance' column in this file.")
+
+else:
+    st.info("👆 Please upload your spreadsheet to get started.")
