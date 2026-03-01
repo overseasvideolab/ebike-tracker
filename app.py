@@ -15,53 +15,64 @@ except KeyError:
     st.error("🔒 API keys missing! Please add them to Streamlit Secrets.")
     st.stop() 
 
-# 2. Fetch Data 
+# 2. Fetch Data (UPGRADED: Extreme Memory Filter)
 @st.cache_data(ttl=3600) 
-def fetch_all_rides(api_key, auth_token):
-    all_rides = []
+def fetch_lightweight_rides(api_key, auth_token):
+    all_rides_filtered = []
     offset = 0
     limit = 50 
     url = "https://ridewithgps.com/api/v1/trips.json"
     seen_ride_ids = set() 
     
-    with st.spinner('Downloading complete ride history...'):
-        while True:
-            response = requests.get(url, auth=(api_key, auth_token), params={"limit": limit, "offset": offset})
-            if response.status_code != 200:
-                st.error(f"API Error: {response.status_code}")
-                break
-                
-            data = response.json()
-            results = data if isinstance(data, list) else data.get('results', data.get('trips', []))
+    while True:
+        response = requests.get(url, auth=(api_key, auth_token), params={"limit": limit, "offset": offset})
+        if response.status_code != 200:
+            break
             
-            if not results: 
-                break
-                
-            first_ride_id = results[0].get('id')
-            if first_ride_id in seen_ride_ids:
-                break 
-                
-            for r in results:
-                seen_ride_ids.add(r.get('id'))
-                
-            all_rides.extend(results)
+        data = response.json()
+        results = data if isinstance(data, list) else data.get('results', data.get('trips', []))
+        
+        if not results: 
+            break
             
-            if len(results) < limit:
-                break
-            offset += limit 
+        first_ride_id = results[0].get('id')
+        if first_ride_id in seen_ride_ids:
+            break 
             
-    return all_rides
-
-raw_data = fetch_all_rides(API_KEY, AUTH_TOKEN)
+        # --- THE MEMORY FILTER ---
+        for r in results:
+            ride_id = r.get('id')
+            seen_ride_ids.add(ride_id)
+            
+            # We ONLY save the tiny bits of text we need, throwing away the heavy map data
+            date_val = r.get('departed_at', r.get('created_at'))
+            dist_val = r.get('distance', 0)
+            
+            lightweight_ride = {
+                'id': ride_id,
+                'departed_at': date_val,
+                'distance': dist_val
+            }
+            all_rides_filtered.append(lightweight_ride)
+            
+        if len(results) < limit:
+            break
+            
+        offset += limit 
+            
+    return all_rides_filtered
 
 # 3. Process Data & Build Dashboard
+# We moved the spinner OUTSIDE the cache function to prevent memory leaks!
+with st.spinner("Crunching your historical data..."):
+    raw_data = fetch_lightweight_rides(API_KEY, AUTH_TOKEN)
+
 if raw_data and len(raw_data) > 0:
     df = pd.DataFrame(raw_data)
     
     # Clean data
-    df['Distance_km'] = df.get('distance', 0) / 1000.0
-    date_col = 'departed_at' if 'departed_at' in df.columns else 'created_at'
-    df['Date'] = pd.to_datetime(df[date_col])
+    df['Distance_km'] = df['distance'] / 1000.0
+    df['Date'] = pd.to_datetime(df['departed_at'])
     
     # Create time markers
     df['Just_Date'] = df['Date'].dt.date 
@@ -110,7 +121,6 @@ if raw_data and len(raw_data) > 0:
             fig_yoy_dist = px.bar(yoy_stats, x='Year', y='Total_Distance', 
                                   title=f"{current_month_name} Total Distance",
                                   text_auto='.1f', color_discrete_sequence=['#FF4B4B'])
-            # FIX: Force the X-axis to be clean text categories, not decimals
             fig_yoy_dist.update_xaxes(type='category', title_text='Year')
             st.plotly_chart(fig_yoy_dist, use_container_width=True)
             
@@ -118,7 +128,6 @@ if raw_data and len(raw_data) > 0:
             fig_yoy_days = px.bar(yoy_stats, x='Year', y='Days_Ridden', 
                                   title=f"{current_month_name} Days Ridden",
                                   text_auto=True, color_discrete_sequence=['#1f77b4'])
-            # FIX: Force the X-axis to be clean text categories
             fig_yoy_days.update_xaxes(type='category', title_text='Year')
             st.plotly_chart(fig_yoy_days, use_container_width=True)
     else:
@@ -133,11 +142,9 @@ if raw_data and len(raw_data) > 0:
     fig_all = px.bar(all_time_stats, x='Month_Year', y='Distance_km', 
                      title="Kilometers Ridden per Month",
                      labels={'Month_Year': 'Month', 'Distance_km': 'Distance (km)'},
-                     text_auto='.1f') # FIX: Added the exact numbers to the top of the bars
+                     text_auto='.1f') 
     
-    # FIX: Force the timeline to use exact months, and angle the text so it's readable
     fig_all.update_xaxes(type='category', tickangle=-45)
-    
     st.plotly_chart(fig_all, use_container_width=True)
 
 else:
