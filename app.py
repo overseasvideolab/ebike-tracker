@@ -9,7 +9,6 @@ import calendar
 st.set_page_config(layout="wide", page_title="Ebike Analytics Engine")
 
 # --- CUSTOM CSS INJECTION ---
-# This block completely changes how the app looks, creating modern cards and hiding ugly borders
 st.markdown("""
 <style>
     /* Clean up the main background and padding */
@@ -57,7 +56,7 @@ with col_head1:
 with col_head2:
     st.subheader(f"Current: {current_month_name} {current_year}")
 
-st.write("") # Adds a little breathing room
+st.write("") 
 
 # --- 1. FETCH CREDENTIALS ---
 try:
@@ -109,7 +108,7 @@ def fetch_weather():
     return None
 
 def get_weather_condition(code):
-    if code <= 3: return "☀️ Sunny / Clear"
+    if code <= 3: return "☀️ Sunny"
     if code in [45, 48]: return "🌫️ Foggy"
     if code in [51, 53, 55, 61, 63, 65, 80, 81, 82]: return "🌧️ Rain"
     if code in [71, 73, 75, 77, 85, 86]: return "❄️ Snow"
@@ -128,7 +127,6 @@ if raw_data and len(raw_data) > 0:
     df['Just_Date'] = df['Date'].dt.date 
     df['Year'] = df['Date'].dt.year.astype(str)
     df['Month_Num'] = df['Date'].dt.month
-    df['Day_Num'] = df['Date'].dt.day
     df['Month_Year'] = df['Date'].dt.to_period('M').astype(str)
     
     days_in_current_month = calendar.monthrange(today.year, today.month)[1]
@@ -137,7 +135,7 @@ if raw_data and len(raw_data) > 0:
     this_month_data = df[(df['Year'] == current_year) & (df['Month_Num'] == current_month_num)]
     this_year_data = df[df['Year'] == current_year]
 
-    # --- TOP KPI METRICS ROW (Using our Custom CSS Cards) ---
+    # --- TOP KPI METRICS ROW ---
     month_dist = this_month_data['Distance_km'].sum()
     month_days = this_month_data['Just_Date'].nunique()
     year_dist = this_year_data['Distance_km'].sum()
@@ -192,7 +190,7 @@ if raw_data and len(raw_data) > 0:
             if "Rain" in condition or "Snow" in condition or "Storm" in condition or temp < 2.0:
                 is_good = False
                 
-            ride_html = '<div class="ride-yes">YES</div>' if is_good else '<div class="ride-no">NO</div>'
+            ride_html = '<div class="ride-yes">Yes</div>' if is_good else '<div class="ride-no">NO</div>'
             
             with weather_cols[i]:
                 st.markdown(f"""
@@ -209,10 +207,10 @@ if raw_data and len(raw_data) > 0:
 
     st.write("---")
 
-    # --- YEAR OVER YEAR (By this date) ---
-    st.markdown(f"### Year by Year by this date: (Mar 1 - Mar {current_day})")
+    # --- YEAR OVER YEAR (Full Month Comparison) ---
+    st.markdown(f"### Year by Year: {current_month_name}")
     
-    yoy_data = df[(df['Month_Num'] == current_month_num) & (df['Day_Num'] <= current_day)]
+    yoy_data = df[df['Month_Num'] == current_month_num]
     
     if not yoy_data.empty:
         yoy_stats = yoy_data.groupby('Year')['Distance_km'].sum().reset_index()
@@ -222,7 +220,6 @@ if raw_data and len(raw_data) > 0:
         with col_chart:
             fig_yoy = px.bar(yoy_stats, x='Year', y='Distance_km', text_auto='.0f')
             
-            # Apply Modern Chart Styling
             fig_yoy.update_traces(marker_color='#1f77b4', textposition='outside')
             fig_yoy.update_layout(
                 plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
@@ -233,30 +230,34 @@ if raw_data and len(raw_data) > 0:
             st.plotly_chart(fig_yoy, use_container_width=True)
             
         with col_table:
-            # Clean Table View
             yoy_display = yoy_stats.copy()
             yoy_display['Distance'] = yoy_display['Distance_km'].apply(lambda x: f"{x:,.0f}km")
             yoy_display = yoy_display[['Year', 'Distance']]
-            yoy_display.columns = [current_month_name, ' ']
+            yoy_display.columns = ['Year', current_month_name]
             st.dataframe(yoy_display, hide_index=True, use_container_width=True)
 
     st.write("---")
 
-    # --- ALL-TIME MACRO TREND ---
-    st.markdown("### All-Time Monthly Trend (Entire History)")
-    all_time_stats = df.groupby('Month_Year')['Distance_km'].sum().reset_index()
+    # --- RECENT MONTHLY TREND (Last 6 Months) ---
+    st.markdown("### Recent Monthly Trend")
     
-    fig_all = px.bar(all_time_stats, x='Month_Year', y='Distance_km', text_auto='.0f') 
+    df['Month_Period'] = df['Date'].dt.to_period('M')
+    six_months_ago = pd.Period(today, freq='M') - 5
+    recent_data = df[df['Month_Period'] >= six_months_ago]
     
-    # Apply Modern Chart Styling
-    fig_all.update_traces(marker_color='#1f77b4', textposition='outside')
-    fig_all.update_layout(
+    recent_stats = recent_data.groupby('Month_Period')['Distance_km'].sum().reset_index()
+    recent_stats['Month_Label'] = recent_stats['Month_Period'].dt.strftime('%b %y')
+    
+    fig_recent = px.bar(recent_stats, x='Month_Label', y='Distance_km', text_auto='.0f') 
+    
+    fig_recent.update_traces(marker_color='#1f77b4', textposition='outside')
+    fig_recent.update_layout(
         plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-        xaxis=dict(showgrid=False, type='category', tickangle=-45, title=""),
+        xaxis=dict(showgrid=False, type='category', title=""),
         yaxis=dict(showgrid=True, gridcolor='#f0f0f0', title="Distance (km)"),
         margin=dict(l=0, r=0, t=20, b=0)
     )
-    st.plotly_chart(fig_all, use_container_width=True)
+    st.plotly_chart(fig_recent, use_container_width=True)
 
 else:
     st.info("No ride data could be found.")
