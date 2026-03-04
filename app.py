@@ -5,14 +5,18 @@ import plotly.express as px
 import datetime
 import calendar
 
-# Set page to wide mode and hide default padding
+# Set page to wide, but we will constrain the max width in CSS so it doesn't stretch infinitely
 st.set_page_config(layout="wide", page_title="Ebike Analytics Engine")
 
 # --- CUSTOM CSS INJECTION ---
 st.markdown("""
 <style>
-    /* Clean up the main background and padding */
-    .block-container { padding-top: 2rem; padding-bottom: 2rem; }
+    /* Constrain the max-width so charts don't become massively stretched on big monitors */
+    .block-container { 
+        padding-top: 2rem; 
+        padding-bottom: 2rem; 
+        max-width: 1200px; 
+    }
     
     /* Custom styling for our top KPI cards */
     .kpi-card {
@@ -40,6 +44,10 @@ st.markdown("""
     .ride-label { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 1px;}
     .ride-yes { color: #28a745; font-weight: 900; font-size: 18px; }
     .ride-no { color: #dc3545; font-weight: 900; font-size: 18px; }
+    
+    /* Make the simple table look cleaner */
+    table { width: 100%; }
+    th { text-align: left !important; color: #666; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -185,7 +193,6 @@ if raw_data and len(raw_data) > 0:
             code = weather_data['weathercode'][i]
             condition = get_weather_condition(code)
             
-            # Logic for Yes/No
             is_good = True
             if "Rain" in condition or "Snow" in condition or "Storm" in condition or temp < 2.0:
                 is_good = False
@@ -220,21 +227,23 @@ if raw_data and len(raw_data) > 0:
         with col_chart:
             fig_yoy = px.bar(yoy_stats, x='Year', y='Distance_km', text_auto='.0f')
             
-            fig_yoy.update_traces(marker_color='#1f77b4', textposition='outside')
+            # FIX: Forced category, removed background, capped bar width so it doesn't look like a giant block
+            fig_yoy.update_traces(marker_color='#1f77b4', textposition='outside', width=0.4)
             fig_yoy.update_layout(
                 plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                xaxis=dict(showgrid=False, title=""),
+                xaxis=dict(type='category', showgrid=False, title=""),
                 yaxis=dict(showgrid=True, gridcolor='#f0f0f0', title="Distance (km)"),
                 margin=dict(l=0, r=0, t=20, b=0)
             )
             st.plotly_chart(fig_yoy, use_container_width=True)
             
         with col_table:
+            # FIX: Swapped to st.table() for a clean, static look without scrollbars
             yoy_display = yoy_stats.copy()
-            yoy_display['Distance'] = yoy_display['Distance_km'].apply(lambda x: f"{x:,.0f}km")
+            yoy_display['Distance'] = yoy_display['Distance_km'].apply(lambda x: f"{x:,.0f} km")
             yoy_display = yoy_display[['Year', 'Distance']]
-            yoy_display.columns = ['Year', current_month_name]
-            st.dataframe(yoy_display, hide_index=True, use_container_width=True)
+            yoy_display.set_index('Year', inplace=True)
+            st.table(yoy_display)
 
     st.write("---")
 
@@ -250,10 +259,11 @@ if raw_data and len(raw_data) > 0:
     
     fig_recent = px.bar(recent_stats, x='Month_Label', y='Distance_km', text_auto='.0f') 
     
-    fig_recent.update_traces(marker_color='#1f77b4', textposition='outside')
+    # FIX: Forced category, capped bar width
+    fig_recent.update_traces(marker_color='#1f77b4', textposition='outside', width=0.5)
     fig_recent.update_layout(
         plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-        xaxis=dict(showgrid=False, type='category', title=""),
+        xaxis=dict(type='category', showgrid=False, title=""),
         yaxis=dict(showgrid=True, gridcolor='#f0f0f0', title="Distance (km)"),
         margin=dict(l=0, r=0, t=20, b=0)
     )
