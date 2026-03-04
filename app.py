@@ -45,11 +45,15 @@ st.markdown("""
     .ride-yes { color: #2e7d32; font-weight: 900; }
     .ride-no { color: #c62828; font-weight: 900; }
     
-    /* Chart and Table adjustments */
     .stTable { font-size: 14px !important; }
     h3 { font-size: 1.2rem !important; font-weight: 700 !important; margin-bottom: 1rem !important; }
 </style>
 """, unsafe_allow_html=True)
+
+# --- BUILT-IN CACHE CLEARING BUTTON ---
+if st.button("🔄 Force Refresh Data (Clear Cache)"):
+    st.cache_data.clear()
+    st.rerun()
 
 # 3. Time Context
 today = datetime.date.today()
@@ -68,26 +72,40 @@ try:
     API_KEY = st.secrets["RWGPS_API_KEY"]
     AUTH_TOKEN = st.secrets["RWGPS_AUTH_TOKEN"]
 except Exception:
-    st.error("Credentials missing in Streamlit Secrets.")
+    st.error("🔒 Credentials missing in Streamlit Secrets.")
     st.stop()
 
 @st.cache_data(ttl=3600)
 def fetch_all_data(api, auth):
     all_rides = []
+    error_message = None
     url = "https://ridewithgps.com/api/v1/trips.json"
-    # Pagination: Pulling last ~500 rides to ensure 2+ years of history
+    
     for offset in range(0, 500, 50):
         try:
-            r = requests.get(url, auth=(api, auth), params={"limit": 50, "offset": offset}).json()
-            res = r if isinstance(r, list) else r.get('results', [])
+            response = requests.get(url, auth=(api, auth), params={"limit": 50, "offset": offset})
+            if response.status_code != 200:
+                error_message = f"API Error {response.status_code}: {response.text}"
+                break
+                
+            r = response.json()
+            res = r if isinstance(r, list) else r.get('results', r.get('trips', []))
             if not res: break
+            
             for x in res:
-                all_rides.append({'d': x.get('departed_at'), 'dist': x.get('distance', 0)})
-        except:
+                all_rides.append({'d': x.get('departed_at', x.get('created_at')), 'dist': x.get('distance', 0)})
+        except Exception as e:
+            error_message = f"Data parsing error: {e}"
             break
-    return all_rides
+            
+    return all_rides, error_message
 
-raw_data = fetch_all_data(API_KEY, AUTH_TOKEN)
+# Fetch the data
+raw_data, error_msg = fetch_all_data(API_KEY, AUTH_TOKEN)
+
+# If there is a connection error, show it loudly on the screen!
+if error_msg:
+    st.error(f"🛑 Failed to connect to Ride with GPS: {error_msg}")
 
 if raw_data:
     df = pd.DataFrame(raw_data)
@@ -100,7 +118,7 @@ if raw_data:
     m_data = df[(df['Year'] == c_year) & (df['Mo_Num'] == c_month)]
     y_data = df[df['Year'] == c_year]
     
-    # 6. Top Metrics (Mobile-First Cards)
+    # 6. Top Metrics
     days_in_mo = calendar.monthrange(today.year, c_month)[1]
     days_in_yr = today.timetuple().tm_yday
     
@@ -157,5 +175,5 @@ if raw_data:
     fig2.update_traces(marker_color='#1f77b4', width=0.5)
     st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar': False})
 
-else:
-    st.warning("Awaiting connection to RidewithGPS...")
+elif not error_msg:
+    st.warning("Awaiting connection to RidewithGPS... Click the 'Force Refresh' button above!")
