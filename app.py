@@ -5,269 +5,115 @@ import plotly.express as px
 import datetime
 import calendar
 
-# Set page to wide, but we will constrain the max width in CSS so it doesn't stretch infinitely
+# 1. Page Configuration
 st.set_page_config(layout="wide", page_title="Ebike Analytics Engine")
 
-# --- CUSTOM CSS INJECTION ---
+# 2. Advanced Styling (CSS) - Making it feel like a Mobile App
 st.markdown("""
 <style>
-    /* Constrain the max-width so charts don't become massively stretched on big monitors */
-    .block-container { 
-        padding-top: 2rem; 
-        padding-bottom: 2rem; 
-        max-width: 1200px; 
-    }
-    
-    /* Custom styling for our top KPI cards */
-    .kpi-card {
-        background-color: #ffffff;
-        border: 1px solid #e0e0e0;
-        border-radius: 12px;
-        padding: 20px 10px;
-        text-align: center;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.02);
-    }
-    .kpi-value { font-size: 32px; font-weight: 800; color: #1f77b4; margin-bottom: 5px; }
-    .kpi-label { font-size: 16px; color: #666666; font-weight: 500;}
-    
-    /* Custom styling for the Weather cards */
-    .weather-card {
-        background-color: #ffffff;
-        border: 1px solid #e0e0e0;
-        border-radius: 10px;
-        padding: 15px 5px;
-        text-align: center;
-    }
-    .weather-day { font-size: 18px; font-weight: bold; color: #333; }
-    .weather-temp { font-size: 24px; font-weight: bold; color: #FF4B4B; margin: 5px 0; }
-    .weather-cond { font-size: 14px; color: #555; margin-bottom: 10px; height: 40px;}
-    .ride-label { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 1px;}
-    .ride-yes { color: #28a745; font-weight: 900; font-size: 18px; }
-    .ride-no { color: #dc3545; font-weight: 900; font-size: 18px; }
-    
-    /* Make the simple table look cleaner */
-    table { width: 100%; }
-    th { text-align: left !important; color: #666; }
+    .block-container { padding-top: 1rem; max-width: 1000px; }
+    [data-testid="stMetric"] { background-color: #f8f9fa; border-radius: 10px; padding: 15px; border: 1px solid #eee; }
+    .kpi-container { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 20px; }
+    .kpi-box { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 15px; flex: 1; text-align: center; }
+    .kpi-val { font-size: 24px; font-weight: bold; color: #1f77b4; }
+    .kpi-lab { font-size: 12px; color: #666; text-transform: uppercase; }
+    .weather-card { background: white; border: 1px solid #eee; border-radius: 8px; padding: 10px; text-align: center; font-size: 13px; }
+    .weather-day { font-weight: bold; border-bottom: 1px solid #eee; margin-bottom: 5px; }
+    .weather-temp { color: #d32f2f; font-weight: bold; font-size: 18px; }
+    .ride-yes { color: #2e7d32; font-weight: bold; }
+    .ride-no { color: #c62828; font-weight: bold; }
+    table { font-size: 14px !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- APP HEADER ---
+# 3. Header [cite: 1, 2]
 today = datetime.date.today()
-current_year = str(today.year)
-current_month_num = today.month
-current_month_name = today.strftime('%B')
-current_day = today.day
+c_year, c_month, c_day = str(today.year), today.month, today.day
+c_month_name = today.strftime('%B')
 
-col_head1, col_head2 = st.columns([3, 1])
-with col_head1:
-    st.title("🚴‍♂️ Ebike Analytics Engine")
-with col_head2:
-    st.subheader(f"Current: {current_month_name} {current_year}")
+col_h1, col_h2 = st.columns([2, 1])
+with col_h1: st.title("🚴‍♂️ Ebike Analytics Engine") [cite: 1]
+with col_h2: st.write(f"### Current: {c_month_name} {c_year}") [cite: 2]
 
-st.write("") 
-
-# --- 1. FETCH CREDENTIALS ---
+# 4. Data Fetching (Memory Protected)
 try:
-    API_KEY = st.secrets["RWGPS_API_KEY"]
-    AUTH_TOKEN = st.secrets["RWGPS_AUTH_TOKEN"]
-except KeyError:
-    st.error("🔒 API keys missing! Please add them to Streamlit Secrets.")
-    st.stop() 
+    API_KEY, AUTH_TOKEN = st.secrets["RWGPS_API_KEY"], st.secrets["RWGPS_AUTH_TOKEN"]
+except:
+    st.error("API Keys missing.")
+    st.stop()
 
-# --- 2. FETCH RIDE DATA ---
-@st.cache_data(ttl=3600) 
-def fetch_lightweight_rides(api_key, auth_token):
-    all_rides_filtered = []
-    offset = 0
-    limit = 50 
-    url = "https://ridewithgps.com/api/v1/trips.json"
-    seen_ride_ids = set() 
-    
-    while True:
-        response = requests.get(url, auth=(api_key, auth_token), params={"limit": limit, "offset": offset})
-        if response.status_code != 200: break
-        data = response.json()
-        results = data if isinstance(data, list) else data.get('results', data.get('trips', []))
-        if not results: break
-        
-        first_ride_id = results[0].get('id')
-        if first_ride_id in seen_ride_ids: break 
-            
-        for r in results:
-            ride_id = r.get('id')
-            seen_ride_ids.add(ride_id)
-            lightweight_ride = {
-                'id': ride_id,
-                'departed_at': r.get('departed_at', r.get('created_at')),
-                'distance': r.get('distance', 0)
-            }
-            all_rides_filtered.append(lightweight_ride)
-            
-        if len(results) < limit: break
-        offset += limit 
-    return all_rides_filtered
-
-# --- 3. FETCH WEATHER DATA ---
 @st.cache_data(ttl=3600)
-def fetch_weather():
-    url = "https://api.open-meteo.com/v1/forecast?latitude=43.7001&longitude=-79.4163&daily=weathercode,temperature_2m_max&timezone=America%2FNew_York"
-    resp = requests.get(url)
-    if resp.status_code == 200: return resp.json()['daily']
-    return None
+def get_data(api, auth):
+    all_r = []
+    url = "https://ridewithgps.com/api/v1/trips.json"
+    for offset in range(0, 500, 50): # Fetches last 500 rides
+        r = requests.get(url, auth=(api, auth), params={"limit": 50, "offset": offset}).json()
+        res = r if isinstance(r, list) else r.get('results', [])
+        if not res: break
+        for x in res:
+            all_r.append({'d': x.get('departed_at'), 'dist': x.get('distance', 0)})
+    return all_r
 
-def get_weather_condition(code):
-    if code <= 3: return "☀️ Sunny"
-    if code in [45, 48]: return "🌫️ Foggy"
-    if code in [51, 53, 55, 61, 63, 65, 80, 81, 82]: return "🌧️ Rain"
-    if code in [71, 73, 75, 77, 85, 86]: return "❄️ Snow"
-    if code in [95, 96, 99]: return "⛈️ Storm"
-    return "☁️ Cloudy"
+data = get_data(API_KEY, AUTH_TOKEN)
 
-with st.spinner("Crunching your data..."):
-    raw_data = fetch_lightweight_rides(API_KEY, AUTH_TOKEN)
-    weather_data = fetch_weather()
-
-# --- 4. PROCESS RIDE DATA ---
-if raw_data and len(raw_data) > 0:
-    df = pd.DataFrame(raw_data)
-    df['Distance_km'] = df['distance'] / 1000.0
-    df['Date'] = pd.to_datetime(df['departed_at'])
-    df['Just_Date'] = df['Date'].dt.date 
+# 5. Dashboard Logic [cite: 3, 4, 5, 6, 7]
+if data:
+    df = pd.DataFrame(data)
+    df['Date'] = pd.to_datetime(df['d'])
+    df['km'] = df['dist'] / 1000.0
     df['Year'] = df['Date'].dt.year.astype(str)
-    df['Month_Num'] = df['Date'].dt.month
-    df['Month_Year'] = df['Date'].dt.to_period('M').astype(str)
+    df['Mo_Num'] = df['Date'].dt.month
     
-    days_in_current_month = calendar.monthrange(today.year, today.month)[1]
-    days_passed_this_year = today.timetuple().tm_yday
+    m_data = df[(df['Year'] == c_year) & (df['Mo_Num'] == c_month)]
+    y_data = df[df['Year'] == c_year]
     
-    this_month_data = df[(df['Year'] == current_year) & (df['Month_Num'] == current_month_num)]
-    this_year_data = df[df['Year'] == current_year]
-
-    # --- TOP KPI METRICS ROW ---
-    month_dist = this_month_data['Distance_km'].sum()
-    month_days = this_month_data['Just_Date'].nunique()
-    year_dist = this_year_data['Distance_km'].sum()
-    year_days = this_year_data['Just_Date'].nunique()
-    
-    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    
-    kpi1.markdown(f"""
-        <div class="kpi-card">
-            <div class="kpi-value">{month_dist:,.0f}km</div>
-            <div class="kpi-label">in {current_month_name}</div>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    kpi2.markdown(f"""
-        <div class="kpi-card">
-            <div class="kpi-value">{month_days}/{days_in_current_month} Days</div>
-            <div class="kpi-label">in {current_month_name}</div>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    kpi3.markdown(f"""
-        <div class="kpi-card">
-            <div class="kpi-value">{year_dist:,.0f}km</div>
-            <div class="kpi-label">in {current_year}</div>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    kpi4.markdown(f"""
-        <div class="kpi-card">
-            <div class="kpi-value">{year_days}/{days_passed_this_year} Days</div>
-            <div class="kpi-label">in {current_year}</div>
-        </div>
+    # KPI Metrics [cite: 3, 4, 5, 6, 7]
+    st.markdown(f"""
+    <div class="kpi-container">
+        <div class="kpi-box"><div class="kpi-val">{m_data['km'].sum():.0f}km</div><div class="kpi-lab">in {c_month_name}</div></div>
+        <div class="kpi-box"><div class="kpi-val">{m_data['Date'].dt.date.nunique()}/{calendar.monthrange(today.year, c_month)[1]}</div><div class="kpi-lab">Days in {c_month_name}</div></div>
+        <div class="kpi-box"><div class="kpi-val">{y_data['km'].sum():.0f}km</div><div class="kpi-lab">in {c_year}</div></div>
+        <div class="kpi-box"><div class="kpi-val">{y_data['Date'].dt.date.nunique()}/{today.timetuple().tm_yday}</div><div class="kpi-lab">Days in {c_year}</div></div>
+    </div>
     """, unsafe_allow_html=True)
 
+    # 6. Weather [cite: 22, 23, 24, 25, 26, 27, 28, 29, 30]
+    st.markdown("### Weather for next 7 days") [cite: 22]
+    w_url = "https://api.open-meteo.com/v1/forecast?latitude=43.7&longitude=-79.4&daily=weathercode,temperature_2m_max&timezone=auto"
+    w_raw = requests.get(w_url).json()['daily']
+    w_cols = st.columns(7)
+    for i in range(7):
+        day_n = datetime.datetime.strptime(w_raw['time'][i], "%Y-%m-%d").strftime("%a")
+        tmp = w_raw['temperature_2m_max'][i]
+        code = w_raw['weathercode'][i]
+        is_ok = "YES" if tmp > 5 and code < 50 else "NO"
+        color = "ride-yes" if is_ok == "YES" else "ride-no"
+        with w_cols[i]:
+            st.markdown(f"""<div class="weather-card"><div class="weather-day">{day_n}</div><div class="weather-temp">{tmp}°C</div>{is_ok == "YES" and "☀️" or "☁️"}<br><span class="ride-label">Ride?</span><br><span class="{color}">{is_ok}</span></div>""", unsafe_allow_html=True)
+
+    # 7. Year over Year [cite: 31, 35]
     st.write("---")
+    st.markdown(f"### Year by Year: {c_month_name}") [cite: 31]
+    yoy = df[df['Mo_Num'] == c_month].groupby('Year')['km'].sum().reset_index()
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        fig = px.bar(yoy, x='Year', y='km', text_auto='.0f')
+        fig.update_xaxes(type='category') # Fixes the 2025.5 decimal issue
+        fig.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), plot_bgcolor='rgba(0,0,0,0)')
+        st.plotly_chart(fig, use_container_width=True)
+    with c2:
+        yoy_t = yoy.copy()
+        yoy_t['km'] = yoy_t['km'].map('{:,.0f}km'.format)
+        st.table(yoy_t.set_index('Year')) [cite: 35]
 
-    # --- WEATHER FORECAST ROW ---
-    st.markdown("### Weather for next 7 days")
-    if weather_data:
-        weather_cols = st.columns(7)
-        for i in range(7):
-            date_str = weather_data['time'][i]
-            day_obj = datetime.datetime.strptime(date_str, "%Y-%m-%d")
-            day_name = day_obj.strftime("%a")
-            temp = weather_data['temperature_2m_max'][i]
-            code = weather_data['weathercode'][i]
-            condition = get_weather_condition(code)
-            
-            is_good = True
-            if "Rain" in condition or "Snow" in condition or "Storm" in condition or temp < 2.0:
-                is_good = False
-                
-            ride_html = '<div class="ride-yes">Yes</div>' if is_good else '<div class="ride-no">NO</div>'
-            
-            with weather_cols[i]:
-                st.markdown(f"""
-                <div class="weather-card">
-                    <div class="weather-day">{day_name}</div>
-                    <div class="weather-temp">{temp}°C</div>
-                    <div class="weather-cond">{condition}</div>
-                    <div class="ride-label">Good to ride?</div>
-                    {ride_html}
-                </div>
-                """, unsafe_allow_html=True)
-    else:
-        st.write("Weather data temporarily unavailable.")
-
-    st.write("---")
-
-    # --- YEAR OVER YEAR (Full Month Comparison) ---
-    st.markdown(f"### Year by Year: {current_month_name}")
-    
-    yoy_data = df[df['Month_Num'] == current_month_num]
-    
-    if not yoy_data.empty:
-        yoy_stats = yoy_data.groupby('Year')['Distance_km'].sum().reset_index()
-        
-        col_chart, col_table = st.columns([2, 1])
-        
-        with col_chart:
-            fig_yoy = px.bar(yoy_stats, x='Year', y='Distance_km', text_auto='.0f')
-            
-            # FIX: Forced category, removed background, capped bar width so it doesn't look like a giant block
-            fig_yoy.update_traces(marker_color='#1f77b4', textposition='outside', width=0.4)
-            fig_yoy.update_layout(
-                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                xaxis=dict(type='category', showgrid=False, title=""),
-                yaxis=dict(showgrid=True, gridcolor='#f0f0f0', title="Distance (km)"),
-                margin=dict(l=0, r=0, t=20, b=0)
-            )
-            st.plotly_chart(fig_yoy, use_container_width=True)
-            
-        with col_table:
-            # FIX: Swapped to st.table() for a clean, static look without scrollbars
-            yoy_display = yoy_stats.copy()
-            yoy_display['Distance'] = yoy_display['Distance_km'].apply(lambda x: f"{x:,.0f} km")
-            yoy_display = yoy_display[['Year', 'Distance']]
-            yoy_display.set_index('Year', inplace=True)
-            st.table(yoy_display)
-
-    st.write("---")
-
-    # --- RECENT MONTHLY TREND (Last 6 Months) ---
+    # 8. Trend [cite: 19, 20, 21]
     st.markdown("### Recent Monthly Trend")
-    
-    df['Month_Period'] = df['Date'].dt.to_period('M')
-    six_months_ago = pd.Period(today, freq='M') - 5
-    recent_data = df[df['Month_Period'] >= six_months_ago]
-    
-    recent_stats = recent_data.groupby('Month_Period')['Distance_km'].sum().reset_index()
-    recent_stats['Month_Label'] = recent_stats['Month_Period'].dt.strftime('%b %y')
-    
-    fig_recent = px.bar(recent_stats, x='Month_Label', y='Distance_km', text_auto='.0f') 
-    
-    # FIX: Forced category, capped bar width
-    fig_recent.update_traces(marker_color='#1f77b4', textposition='outside', width=0.5)
-    fig_recent.update_layout(
-        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-        xaxis=dict(type='category', showgrid=False, title=""),
-        yaxis=dict(showgrid=True, gridcolor='#f0f0f0', title="Distance (km)"),
-        margin=dict(l=0, r=0, t=20, b=0)
-    )
-    st.plotly_chart(fig_recent, use_container_width=True)
-
+    df['MP'] = df['Date'].dt.to_period('M')
+    trend = df[df['MP'] >= (pd.Period(today, 'M') - 5)].groupby('MP')['km'].sum().reset_index()
+    trend['Month'] = trend['MP'].dt.strftime('%b %y')
+    fig2 = px.bar(trend, x='Month', y='km', text_auto='.0f')
+    fig2.update_xaxes(type='category')
+    fig2.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), plot_bgcolor='rgba(0,0,0,0)')
+    st.plotly_chart(fig2, use_container_width=True)
 else:
-    st.info("No ride data could be found.")
+    st.warning("No data found.")
