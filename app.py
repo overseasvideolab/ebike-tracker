@@ -8,7 +8,7 @@ import calendar
 # 1. Page Configuration
 st.set_page_config(layout="wide", page_title="Ebike Analytics Engine")
 
-# 2. Advanced Styling (CSS) - Making it feel like a Native Mobile App
+# 2. Advanced Styling (CSS)
 st.markdown("""
 <style>
     .block-container { padding-top: 1rem; max-width: 1000px; margin: auto; }
@@ -50,20 +50,19 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- BUILT-IN CACHE CLEARING BUTTON ---
 if st.button("🔄 Force Refresh Data (Clear Cache)"):
     st.cache_data.clear()
     st.rerun()
 
 # 3. Time Context
 today = datetime.date.today()
-c_year, c_month = str(today.year), today.month
+c_year, c_month, c_day = str(today.year), today.month, today.day
 c_month_name = today.strftime('%B')
 
 # 4. Header Section
 col_h1, col_h2 = st.columns([2, 1])
 with col_h1: 
-    st.title("🚴‍♂️ Ebike Analytics")
+    st.title("🚴‍♂️ Ebike Analytics Engine")
 with col_h2: 
     st.write(f"**Current: {c_month_name} {c_year}**")
 
@@ -100,10 +99,8 @@ def fetch_all_data(api, auth):
             
     return all_rides, error_message
 
-# Fetch the data
 raw_data, error_msg = fetch_all_data(API_KEY, AUTH_TOKEN)
 
-# If there is a connection error, show it loudly on the screen!
 if error_msg:
     st.error(f"🛑 Failed to connect to Ride with GPS: {error_msg}")
 
@@ -113,26 +110,27 @@ if raw_data:
     df['km'] = df['dist'] / 1000.0
     df['Year'] = df['Date'].dt.year.astype(str)
     df['Mo_Num'] = df['Date'].dt.month
+    df['Day_Num'] = df['Date'].dt.day
     
     # Slice data for KPIs
     m_data = df[(df['Year'] == c_year) & (df['Mo_Num'] == c_month)]
     y_data = df[df['Year'] == c_year]
     
-    # 6. Top Metrics
+    # 6. Top Metrics (Matched exactly to sketch fractions)
     days_in_mo = calendar.monthrange(today.year, c_month)[1]
     days_in_yr = today.timetuple().tm_yday
     
     st.markdown(f"""
     <div class="kpi-container">
         <div class="kpi-box"><div class="kpi-val">{m_data['km'].sum():.0f}km</div><div class="kpi-lab">in {c_month_name}</div></div>
-        <div class="kpi-box"><div class="kpi-val">{m_data['Date'].dt.date.nunique()}/{days_in_mo}</div><div class="kpi-lab">Days in {c_month_name}</div></div>
+        <div class="kpi-box"><div class="kpi-val">{m_data['Date'].dt.date.nunique()}/{days_in_mo} Days</div><div class="kpi-lab">in {c_month_name}</div></div>
         <div class="kpi-box"><div class="kpi-val">{y_data['km'].sum():.0f}km</div><div class="kpi-lab">in {c_year}</div></div>
-        <div class="kpi-box"><div class="kpi-val">{y_data['Date'].dt.date.nunique()}/{days_in_yr}</div><div class="kpi-lab">Days in {c_year}</div></div>
+        <div class="kpi-box"><div class="kpi-val">{y_data['Date'].dt.date.nunique()}/{days_in_yr} Days</div><div class="kpi-lab">in {c_year}</div></div>
     </div>
     """, unsafe_allow_html=True)
 
     # 7. Weather
-    st.write("### ⛅ Weather Forecast")
+    st.write("### ⛅ Weather for next 7 days")
     try:
         w_res = requests.get("https://api.open-meteo.com/v1/forecast?latitude=43.7&longitude=-79.4&daily=weathercode,temperature_2m_max&timezone=auto").json()['daily']
         w_cols = st.columns(7)
@@ -149,30 +147,49 @@ if raw_data:
 
     st.write("---")
 
-    # 8. Year over Year (Full Month Comparison)
-    st.write(f"### 📊 Year by Year: {c_month_name}")
-    yoy = df[df['Mo_Num'] == c_month].groupby('Year')['km'].sum().reset_index()
+    # 8. EXACT PDF MATH: Year over Year by THIS DATE
+    st.write(f"### 📊 Year by Year by this date:")
+    
+    # Filter for the current month AND only days leading up to today's current date
+    yoy_data = df[(df['Mo_Num'] == c_month) & (df['Day_Num'] <= c_day)]
+    
+    yoy = yoy_data.groupby('Year')['km'].sum().reset_index()
     c1, c2 = st.columns([2, 1])
     with c1:
         fig = px.bar(yoy, x='Year', y='km', text_auto='.0f')
-        fig.update_xaxes(type='category')
+        fig.update_xaxes(type='category', title="")
+        fig.update_yaxes(title="")
         fig.update_layout(height=280, margin=dict(l=0,r=0,t=20,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
-        fig.update_traces(marker_color='#1f77b4', width=0.4)
+        fig.update_traces(marker_color='#1f77b4', width=0.4, textposition='outside')
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     with c2:
-        yoy_disp = yoy.rename(columns={'Year': 'Yr', 'km': 'Dist'})
-        yoy_disp['Dist'] = yoy_disp['Dist'].map('{:,.0f}km'.format)
-        st.table(yoy_disp.set_index('Yr'))
+        # Format table exactly like the PDF: Header is "March", rows are "2024", "500km"
+        if not yoy.empty:
+            yoy_disp = yoy.copy()
+            yoy_disp['km'] = yoy_disp['km'].map('{:,.0f}km'.format)
+            yoy_disp.columns = [c_month_name, ' ']
+            st.table(yoy_disp.set_index(c_month_name))
+        else:
+            st.write(f"No rides yet between {c_month_name} 1 - {c_day}")
 
-    # 9. Recent Trend
+    st.write("---")
+
+    # 9. EXACT PDF MATH: Recent Trend (Exactly 5 months: Nov, Dec, Jan, Feb, Mar)
     st.write("### 📈 Recent Monthly Trend")
     df['MP'] = df['Date'].dt.to_period('M')
-    trend = df[df['MP'] >= (pd.Period(today, 'M') - 5)].groupby('MP')['km'].sum().reset_index()
+    
+    # Pull exactly the last 5 months to match the 5 bars in your sketch
+    five_months_ago = pd.Period(today, 'M') - 4
+    trend = df[df['MP'] >= five_months_ago].groupby('MP')['km'].sum().reset_index()
+    
+    # Format labels exactly like sketch: "Nov 25", "Dec 25"
     trend['Month'] = trend['MP'].dt.strftime('%b %y')
+    
     fig2 = px.bar(trend, x='Month', y='km', text_auto='.0f')
-    fig2.update_xaxes(type='category')
+    fig2.update_xaxes(type='category', title="")
+    fig2.update_yaxes(title="")
     fig2.update_layout(height=280, margin=dict(l=0,r=0,t=20,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
-    fig2.update_traces(marker_color='#1f77b4', width=0.5)
+    fig2.update_traces(marker_color='#1f77b4', width=0.5, textposition='outside')
     st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar': False})
 
 elif not error_msg:
