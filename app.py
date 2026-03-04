@@ -129,22 +129,20 @@ if raw_data:
     full_month_history = df[df['Mo_Num'] == c_month].groupby('Year')['km'].sum().reset_index()
     
     if not full_month_history.empty:
-        # Calculate Average
         avg_km = full_month_history['km'].mean()
-        
-        # Format Labels
         full_month_history['Label'] = "TOTAL KM - " + c_month_name.upper() + " " + full_month_history['Year']
         avg_row = pd.DataFrame({'Label': [f"AVERAGE {c_month_name.upper()} KM ({len(full_month_history)} YRS)"], 'km': [avg_km]})
         
-        # Combine and sort so average is at the bottom
         seg2_data = pd.concat([full_month_history, avg_row], ignore_index=True)
         
         fig2 = px.bar(seg2_data, x='km', y='Label', orientation='h', text_auto='.0f')
         fig2.update_traces(marker_color='#F28C28', textposition='outside', texttemplate='%{x:.0f} KM')
         fig2.update_layout(
             height=250, margin=dict(l=0,r=40,t=10,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-            xaxis=dict(showgrid=False, visible=False), yaxis=dict(title="", showgrid=False, tickfont=dict(size=14, weight='bold', color='#000'))
+            xaxis=dict(showgrid=False, visible=False)
         )
+        # FIX: Force the Y-Axis to act as distinct categories to prevent decimal years
+        fig2.update_yaxes(type='category', title="", showgrid=False, tickfont=dict(size=14, weight='bold', color='#000'))
         st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar': False})
 
     # ==========================================
@@ -175,7 +173,6 @@ if raw_data:
             tmp = w_res['temperature_2m_max'][i]
             code = w_res['weathercode'][i]
             
-            # Logic & Reasons
             reasons = []
             if tmp < 5: reasons.append("Too Cold")
             if code >= 50: reasons.append("Precipitation")
@@ -185,15 +182,9 @@ if raw_data:
             status_class = "ride-yes" if is_ok == "YES" else "ride-no"
             reason_text = ", ".join(reasons) if reasons else ""
             
-            weather_html += f"""
-            <div class="weather-card">
-                <div class="weather-day">{d_name}</div>
-                <div class="weather-temp">{tmp:.0f}°C</div>
-                <div class="weather-icon">{icon}</div>
-                <div class="{status_class}">{is_ok}</div>
-                <div class="weather-reason">{reason_text}</div>
-            </div>
-            """
+            # FIX: Formatted tightly as a single unindented string so Streamlit does not treat it as a code block
+            weather_html += f"<div class='weather-card'><div class='weather-day'>{d_name}</div><div class='weather-temp'>{tmp:.0f}°C</div><div class='weather-icon'>{icon}</div><div class='{status_class}'>{is_ok}</div><div class='weather-reason'>{reason_text}</div></div>"
+            
         weather_html += '</div>'
         st.markdown(weather_html, unsafe_allow_html=True)
     except:
@@ -204,7 +195,6 @@ if raw_data:
     # ==========================================
     st.write(f"### YEAR BY YEAR UP TO THIS DATE ({c_month_name.upper()} {c_day})")
     
-    # Filter: Everything from Jan 1st up to the current day of the current month
     ytd_data = df[(df['Mo_Num'] < c_month) | ((df['Mo_Num'] == c_month) & (df['Day_Num'] <= c_day))]
     ytd_stats = ytd_data.groupby('Year')['km'].sum().reset_index()
     
@@ -213,8 +203,10 @@ if raw_data:
         fig5.update_traces(marker_color='#4eb2e8', textposition='inside', texttemplate='%{x:.0f}KM', textfont=dict(color='black', size=14))
         fig5.update_layout(
             height=200, margin=dict(l=0,r=20,t=10,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-            xaxis=dict(showgrid=False, visible=False), yaxis=dict(title="", showgrid=False, autorange="reversed", tickfont=dict(size=16, color='#000'))
+            xaxis=dict(showgrid=False, visible=False)
         )
+        # FIX: Force the Y-Axis to act as distinct categories to prevent decimal years
+        fig5.update_yaxes(type='category', title="", showgrid=False, autorange="reversed", tickfont=dict(size=16, color='#000'))
         st.plotly_chart(fig5, use_container_width=True, config={'displayModeBar': False})
     else:
         st.write("No rides logged before this date historically.")
@@ -226,14 +218,9 @@ if raw_data:
     
     col_a1, col_a2, col_a3 = st.columns(3)
     
-    # Calculate favorite day
     fav_day = df['Day_Of_Week'].value_counts().idxmax()
-    
-    # Calculate longest ride
     longest_ride = df['km'].max()
     longest_ride_date = df.loc[df['km'].idxmax(), 'Date'].strftime('%b %d, %Y')
-    
-    # Calculate total lifetime distance
     lifetime_km = df['km'].sum()
     
     col_a1.metric("Favorite Day to Ride", fav_day)
