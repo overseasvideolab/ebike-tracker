@@ -72,9 +72,12 @@ def fetch_all_data(api, auth):
     error_message = None
     url = "https://ridewithgps.com/api/v1/trips.json"
     
-    for offset in range(0, 500, 50):
+    offset = 0
+    limit = 50
+    # FIX: Increased limit to safely pull up to 5000 rides so it actually reaches August 2023!
+    while offset < 5000:
         try:
-            response = requests.get(url, auth=(api, auth), params={"limit": 50, "offset": offset})
+            response = requests.get(url, auth=(api, auth), params={"limit": limit, "offset": offset})
             if response.status_code != 200:
                 error_message = f"API Error {response.status_code}: {response.text}"
                 break
@@ -85,13 +88,20 @@ def fetch_all_data(api, auth):
             
             for x in res:
                 all_rides.append({'d': x.get('departed_at', x.get('created_at')), 'dist': x.get('distance', 0)})
+            
+            # If we get fewer rides than requested, we've hit the very first ride.
+            if len(res) < limit:
+                break
+                
+            offset += limit
         except Exception as e:
             error_message = f"Data parsing error: {e}"
             break
             
     return all_rides, error_message
 
-raw_data, error_msg = fetch_all_data(API_KEY, AUTH_TOKEN)
+with st.spinner("Downloading your complete 30,000+ km history..."):
+    raw_data, error_msg = fetch_all_data(API_KEY, AUTH_TOKEN)
 
 if error_msg:
     st.error(f"🛑 Failed to connect to Ride with GPS: {error_msg}")
@@ -116,9 +126,9 @@ if raw_data:
     
     st.markdown(f"""
     <div class="kpi-container">
-        <div class="kpi-box"><div class="kpi-val">{m_data['km'].sum():.0f}km</div><div class="kpi-lab">IN <span>{c_month_name.upper()} {c_year}</span></div></div>
+        <div class="kpi-box"><div class="kpi-val">{m_data['km'].sum():,.0f}km</div><div class="kpi-lab">IN <span>{c_month_name.upper()} {c_year}</span></div></div>
         <div class="kpi-box"><div class="kpi-val">{m_data['Date'].dt.date.nunique()}/{days_in_mo} Days</div><div class="kpi-lab">IN <span>{c_month_name.upper()} {c_year}</span></div></div>
-        <div class="kpi-box"><div class="kpi-val">{y_data['km'].sum():.0f}km</div><div class="kpi-lab">IN {c_year} <span>TOTAL</span></div></div>
+        <div class="kpi-box"><div class="kpi-val">{y_data['km'].sum():,.0f}km</div><div class="kpi-lab">IN {c_year} <span>TOTAL</span></div></div>
         <div class="kpi-box"><div class="kpi-val">{y_data['Date'].dt.date.nunique()}/{days_in_yr} Days</div><div class="kpi-lab">IN {c_year} <span>TOTAL</span></div></div>
     </div>
     """, unsafe_allow_html=True)
@@ -136,12 +146,12 @@ if raw_data:
         seg2_data = pd.concat([full_month_history, avg_row], ignore_index=True)
         
         fig2 = px.bar(seg2_data, x='km', y='Label', orientation='h', text_auto='.0f')
-        fig2.update_traces(marker_color='#F28C28', textposition='outside', texttemplate='%{x:.0f} KM')
+        # FIX: textposition='inside', bigger font, white color, added 'km'
+        fig2.update_traces(marker_color='#F28C28', textposition='inside', texttemplate='<b>%{x:,.0f} km</b>', textfont=dict(size=18, color='white'))
         fig2.update_layout(
-            height=250, margin=dict(l=0,r=40,t=10,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+            height=300, margin=dict(l=0,r=40,t=10,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
             xaxis=dict(showgrid=False, visible=False)
         )
-        # FIX: Force the Y-Axis to act as distinct categories to prevent decimal years
         fig2.update_yaxes(type='category', title="", showgrid=False, tickfont=dict(size=14, weight='bold', color='#000'))
         st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar': False})
 
@@ -154,9 +164,10 @@ if raw_data:
     trend['Month'] = trend['MP'].dt.strftime('%b %y')
     
     fig3 = px.bar(trend, x='Month', y='km', text_auto='.0f')
-    fig3.update_traces(marker_color='white', marker_line_color='black', marker_line_width=2, textposition='inside', textfont=dict(color='#1f77b4', size=16))
+    # FIX: New color (Purple), inside text, readable, added 'km'
+    fig3.update_traces(marker_color='#8e44ad', textposition='inside', texttemplate='<b>%{y:,.0f} km</b>', textfont=dict(size=18, color='white'))
     fig3.update_layout(
-        height=250, margin=dict(l=0,r=0,t=20,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+        height=300, margin=dict(l=0,r=0,t=20,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
         xaxis=dict(type='category', title="", tickfont=dict(size=14, color='#000')), yaxis=dict(visible=False, showgrid=False)
     )
     st.plotly_chart(fig3, use_container_width=True, config={'displayModeBar': False})
@@ -182,7 +193,6 @@ if raw_data:
             status_class = "ride-yes" if is_ok == "YES" else "ride-no"
             reason_text = ", ".join(reasons) if reasons else ""
             
-            # FIX: Formatted tightly as a single unindented string so Streamlit does not treat it as a code block
             weather_html += f"<div class='weather-card'><div class='weather-day'>{d_name}</div><div class='weather-temp'>{tmp:.0f}°C</div><div class='weather-icon'>{icon}</div><div class='{status_class}'>{is_ok}</div><div class='weather-reason'>{reason_text}</div></div>"
             
         weather_html += '</div>'
@@ -200,12 +210,12 @@ if raw_data:
     
     if not ytd_stats.empty:
         fig5 = px.bar(ytd_stats, x='km', y='Year', orientation='h', text_auto='.0f')
-        fig5.update_traces(marker_color='#4eb2e8', textposition='inside', texttemplate='%{x:.0f}KM', textfont=dict(color='black', size=14))
+        # FIX: Text inside, large, readable font, added 'km'
+        fig5.update_traces(marker_color='#4eb2e8', textposition='inside', texttemplate='<b>%{x:,.0f} km</b>', textfont=dict(size=18, color='white'))
         fig5.update_layout(
-            height=200, margin=dict(l=0,r=20,t=10,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+            height=250, margin=dict(l=0,r=20,t=10,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
             xaxis=dict(showgrid=False, visible=False)
         )
-        # FIX: Force the Y-Axis to act as distinct categories to prevent decimal years
         fig5.update_yaxes(type='category', title="", showgrid=False, autorange="reversed", tickfont=dict(size=16, color='#000'))
         st.plotly_chart(fig5, use_container_width=True, config={'displayModeBar': False})
     else:
@@ -224,7 +234,7 @@ if raw_data:
     lifetime_km = df['km'].sum()
     
     col_a1.metric("Favorite Day to Ride", fav_day)
-    col_a2.metric("Longest Single Ride", f"{longest_ride:.1f} km", help=f"Achieved on {longest_ride_date}")
+    col_a2.metric("Longest Single Ride", f"{longest_ride:,.1f} km", help=f"Achieved on {longest_ride_date}")
     col_a3.metric("Lifetime Distance Logged", f"{lifetime_km:,.0f} km")
 
 elif not error_msg:
