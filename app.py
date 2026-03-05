@@ -61,7 +61,6 @@ def fetch_all_data(api, auth):
     offset = 0
     seen_ids = set()
     
-    # FIX: Bulletproof loop. Will not stop until the API hands over 0 rides.
     while True:
         try:
             params = {"page": page, "offset": offset, "limit": 100, "per_page": 100}
@@ -74,11 +73,9 @@ def fetch_all_data(api, auth):
             r = response.json()
             res = r if isinstance(r, list) else r.get('results', r.get('trips', []))
             
-            # If the page is literally empty, we've finally hit the bottom!
             if not res: 
                 break
             
-            # If API ignores pagination and gets stuck handing us Page 1, break the loop
             if res[0].get('id') in seen_ids: 
                 break 
             
@@ -88,7 +85,6 @@ def fetch_all_data(api, auth):
                     seen_ids.add(ride_id)
                     all_rides.append({'d': x.get('departed_at', x.get('created_at')), 'dist': x.get('distance', 0)})
             
-            # Move exact number of pages forward, bypassing the API's strict limits
             offset += len(res)
             page += 1
             
@@ -106,7 +102,14 @@ if error_msg:
 
 if raw_data:
     df = pd.DataFrame(raw_data)
-    df['Date'] = pd.to_datetime(df['d'])
+    
+    # --- THE FIX: Force strict datetime formatting and handle mixed timezones ---
+    # 1. Convert to UTC to standardize any weird mixed timezones, dropping fully broken rows
+    df['Date'] = pd.to_datetime(df['d'], errors='coerce', utc=True)
+    df = df.dropna(subset=['Date']) 
+    # 2. Strip the timezone so Plotly doesn't complain about it later
+    df['Date'] = df['Date'].dt.tz_convert(None)
+    
     df['km'] = df['dist'] / 1000.0
     df['Year'] = df['Date'].dt.year.astype(str)
     df['Mo_Num'] = df['Date'].dt.month
@@ -173,7 +176,6 @@ if raw_data:
     try:
         w_res = requests.get("https://api.open-meteo.com/v1/forecast?latitude=43.7&longitude=-79.4&daily=weathercode,temperature_2m_max&timezone=auto").json()['daily']
         
-        # FIX: Flattened HTML completely onto single lines to prevent markdown formatting issues
         weather_html = '<div style="display: flex; gap: 10px; overflow-x: auto; padding-bottom: 10px;">'
         for i in range(7):
             d_name = datetime.datetime.strptime(w_res['time'][i], "%Y-%m-%d").strftime("%a")
