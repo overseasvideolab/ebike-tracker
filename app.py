@@ -42,7 +42,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-if st.button("🔄 Force Refresh Data"):
+if st.button("🔄 Force Refresh Data (Click to pull full history)"):
     st.cache_data.clear()
     st.rerun()
 
@@ -74,8 +74,10 @@ def fetch_all_data(api, auth):
     
     offset = 0
     limit = 50
-    # FIX: Increased limit to safely pull up to 5000 rides so it actually reaches August 2023!
-    while offset < 5000:
+    seen_ids = set() # Safety net to prevent infinite loops
+    
+    # UNLIMITED LOOP: Will keep going until it hits your very first ride in Aug 2023
+    while True:
         try:
             response = requests.get(url, auth=(api, auth), params={"limit": limit, "offset": offset})
             if response.status_code != 200:
@@ -86,10 +88,14 @@ def fetch_all_data(api, auth):
             res = r if isinstance(r, list) else r.get('results', r.get('trips', []))
             if not res: break
             
+            # Anti-infinite loop protection
+            if res[0].get('id') in seen_ids: break
+            
             for x in res:
+                seen_ids.add(x.get('id'))
                 all_rides.append({'d': x.get('departed_at', x.get('created_at')), 'dist': x.get('distance', 0)})
             
-            # If we get fewer rides than requested, we've hit the very first ride.
+            # If the API sends back fewer than 50 rides, we've reached the very end of your history!
             if len(res) < limit:
                 break
                 
@@ -100,7 +106,7 @@ def fetch_all_data(api, auth):
             
     return all_rides, error_message
 
-with st.spinner("Downloading your complete 30,000+ km history..."):
+with st.spinner("Downloading your complete 33,000+ km history..."):
     raw_data, error_msg = fetch_all_data(API_KEY, AUTH_TOKEN)
 
 if error_msg:
@@ -146,7 +152,6 @@ if raw_data:
         seg2_data = pd.concat([full_month_history, avg_row], ignore_index=True)
         
         fig2 = px.bar(seg2_data, x='km', y='Label', orientation='h', text_auto='.0f')
-        # FIX: textposition='inside', bigger font, white color, added 'km'
         fig2.update_traces(marker_color='#F28C28', textposition='inside', texttemplate='<b>%{x:,.0f} km</b>', textfont=dict(size=18, color='white'))
         fig2.update_layout(
             height=300, margin=dict(l=0,r=40,t=10,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
@@ -164,7 +169,6 @@ if raw_data:
     trend['Month'] = trend['MP'].dt.strftime('%b %y')
     
     fig3 = px.bar(trend, x='Month', y='km', text_auto='.0f')
-    # FIX: New color (Purple), inside text, readable, added 'km'
     fig3.update_traces(marker_color='#8e44ad', textposition='inside', texttemplate='<b>%{y:,.0f} km</b>', textfont=dict(size=18, color='white'))
     fig3.update_layout(
         height=300, margin=dict(l=0,r=0,t=20,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
@@ -193,6 +197,7 @@ if raw_data:
             status_class = "ride-yes" if is_ok == "YES" else "ride-no"
             reason_text = ", ".join(reasons) if reasons else ""
             
+            # HTML rendered on one line to avoid markdown bugs
             weather_html += f"<div class='weather-card'><div class='weather-day'>{d_name}</div><div class='weather-temp'>{tmp:.0f}°C</div><div class='weather-icon'>{icon}</div><div class='{status_class}'>{is_ok}</div><div class='weather-reason'>{reason_text}</div></div>"
             
         weather_html += '</div>'
@@ -210,7 +215,6 @@ if raw_data:
     
     if not ytd_stats.empty:
         fig5 = px.bar(ytd_stats, x='km', y='Year', orientation='h', text_auto='.0f')
-        # FIX: Text inside, large, readable font, added 'km'
         fig5.update_traces(marker_color='#4eb2e8', textposition='inside', texttemplate='<b>%{x:,.0f} km</b>', textfont=dict(size=18, color='white'))
         fig5.update_layout(
             height=250, margin=dict(l=0,r=20,t=10,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
