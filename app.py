@@ -57,15 +57,14 @@ def fetch_all_data(api, auth):
     error_message = None
     url = "https://ridewithgps.com/api/v1/trips.json"
     
-    # FIX: Using proper Page pagination instead of Offset, pulling 100 at a time
     page = 1
-    per_page = 100
+    offset = 0
     seen_ids = set()
     
+    # FIX: Bulletproof loop. Will not stop until the API hands over 0 rides.
     while True:
         try:
-            # Sending both standard pagination formats to force the API to give us older data
-            params = {"page": page, "per_page": per_page, "limit": per_page, "offset": (page-1)*per_page}
+            params = {"page": page, "offset": offset, "limit": 100, "per_page": 100}
             response = requests.get(url, auth=(api, auth), params=params)
             
             if response.status_code != 200:
@@ -74,18 +73,25 @@ def fetch_all_data(api, auth):
                 
             r = response.json()
             res = r if isinstance(r, list) else r.get('results', r.get('trips', []))
-            if not res: break
             
-            if res[0].get('id') in seen_ids: break # Stop if it hands us Page 1 again
+            # If the page is literally empty, we've finally hit the bottom!
+            if not res: 
+                break
+            
+            # If API ignores pagination and gets stuck handing us Page 1, break the loop
+            if res[0].get('id') in seen_ids: 
+                break 
             
             for x in res:
-                seen_ids.add(x.get('id'))
-                all_rides.append({'d': x.get('departed_at', x.get('created_at')), 'dist': x.get('distance', 0)})
+                ride_id = x.get('id')
+                if ride_id not in seen_ids:
+                    seen_ids.add(ride_id)
+                    all_rides.append({'d': x.get('departed_at', x.get('created_at')), 'dist': x.get('distance', 0)})
             
-            if len(res) < per_page:
-                break # Reached the end!
-                
+            # Move exact number of pages forward, bypassing the API's strict limits
+            offset += len(res)
             page += 1
+            
         except Exception as e:
             error_message = f"Data parsing error: {e}"
             break
@@ -110,7 +116,7 @@ if raw_data:
     m_data = df[(df['Year'] == c_year) & (df['Mo_Num'] == c_month)]
     y_data = df[df['Year'] == c_year]
     
-    # --- DIAGNOSTIC TRACKER: So we know for a fact if it worked ---
+    # --- DIAGNOSTIC TRACKER ---
     oldest_ride = df['Date'].min().strftime('%B %Y')
     st.success(f"✅ Successfully loaded **{len(df)}** total rides. Oldest ride found: **{oldest_ride}**.")
 
@@ -167,7 +173,7 @@ if raw_data:
     try:
         w_res = requests.get("https://api.open-meteo.com/v1/forecast?latitude=43.7&longitude=-79.4&daily=weathercode,temperature_2m_max&timezone=auto").json()['daily']
         
-        # HTML completely sanitized to prevent Markdown bugs
+        # FIX: Flattened HTML completely onto single lines to prevent markdown formatting issues
         weather_html = '<div style="display: flex; gap: 10px; overflow-x: auto; padding-bottom: 10px;">'
         for i in range(7):
             d_name = datetime.datetime.strptime(w_res['time'][i], "%Y-%m-%d").strftime("%a")
@@ -183,15 +189,8 @@ if raw_data:
             txt_color = "#2e7d32" if is_ok == "YES" else "#c62828"
             reason_text = ", ".join(reasons) if reasons else ""
             
-            weather_html += f'''
-            <div style="background: white; border: 1px solid #eee; border-radius: 10px; padding: 12px 5px; text-align: center; flex: 1; min-width: 85px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
-                <div style="font-weight: 700; font-size: 13px; margin-bottom: 8px; color: #555;">{d_name}</div>
-                <div style="color: #d32f2f; font-weight: 900; font-size: 18px; margin-bottom: 5px;">{tmp:.0f}°C</div>
-                <div style="font-size: 20px; margin-bottom: 5px;">{icon}</div>
-                <div style="color: {txt_color}; font-weight: 900; font-size: 14px; margin-top: 5px;">{is_ok}</div>
-                <div style="font-size: 10px; color: #777; height: 15px; margin-top: 2px;">{reason_text}</div>
-            </div>
-            '''
+            weather_html += f"<div style='background: white; border: 1px solid #eee; border-radius: 10px; padding: 12px 5px; text-align: center; flex: 1; min-width: 85px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);'><div style='font-weight: 700; font-size: 13px; margin-bottom: 8px; color: #555;'>{d_name}</div><div style='color: #d32f2f; font-weight: 900; font-size: 18px; margin-bottom: 5px;'>{tmp:.0f}°C</div><div style='font-size: 20px; margin-bottom: 5px;'>{icon}</div><div style='color: {txt_color}; font-weight: 900; font-size: 14px; margin-top: 5px;'>{is_ok}</div><div style='font-size: 10px; color: #777; height: 15px; margin-top: 2px;'>{reason_text}</div></div>"
+        
         weather_html += '</div>'
         st.markdown(weather_html, unsafe_allow_html=True)
     except:
