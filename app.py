@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import requests
 import plotly.express as px
-import plotly.graph_objects as go
 import datetime
 import calendar
 
@@ -48,7 +47,7 @@ today = datetime.date.today()
 c_year, c_month, c_day = str(today.year), today.month, today.day
 c_month_name = today.strftime('%B')
 
-# 4. Data Fetching (Now including Elevation and Moving Time!)
+# 4. Data Fetching 
 try:
     API_KEY = st.secrets["RWGPS_API_KEY"]
     AUTH_TOKEN = st.secrets["RWGPS_AUTH_TOKEN"]
@@ -110,12 +109,12 @@ if error_msg:
 if raw_data:
     df = pd.DataFrame(raw_data)
     
-    # Standardize Timezones
+    # --- TIMEZONE FIX ---
+    # Convert UTC data from RideWithGPS to Toronto local time
     df['Date'] = pd.to_datetime(df['d'], errors='coerce', utc=True)
     df = df.dropna(subset=['Date']) 
-    df['Date'] = df['Date'].dt.tz_convert(None)
+    df['Date'] = df['Date'].dt.tz_convert('America/Toronto').dt.tz_localize(None)
     
-    # Advanced Metrics Calculation
     df['km'] = df['dist'] / 1000.0
     df['Year'] = df['Date'].dt.year.astype(str)
     df['Mo_Num'] = df['Date'].dt.month
@@ -124,7 +123,6 @@ if raw_data:
     df['Day_Of_Year'] = df['Date'].dt.dayofyear
     df['Hour'] = df['Date'].dt.hour
     
-    # Time of Day logic
     def get_time_of_day(h):
         if 5 <= h < 12: return 'Morning (5am-12pm)'
         elif 12 <= h < 17: return 'Afternoon (12pm-5pm)'
@@ -150,7 +148,6 @@ if raw_data:
     </div>
     """, unsafe_allow_html=True)
 
-    # GLOBAL CHART FORMATTING FUNCTION
     def format_horizontal_chart(fig, color_hex):
         fig.update_traces(
             marker_color=color_hex, textposition='inside', insidetextanchor='middle',
@@ -169,7 +166,6 @@ if raw_data:
     col_chart1, col_chart2 = st.columns(2)
     col_chart3, col_chart4 = st.columns(2)
 
-    # 1. WEEKLY CURRENT MONTH
     with col_chart1:
         st.write(f"### 📅 WEEKLY: {c_month_name.upper()}")
         def get_week_label(day):
@@ -188,7 +184,6 @@ if raw_data:
         fig1 = px.bar(weekly_stats, x='km', y='Week', orientation='h')
         st.plotly_chart(format_horizontal_chart(fig1, '#2ecc71'), use_container_width=True, config={'displayModeBar': False})
 
-    # 2. MONTHLY COMPARE
     with col_chart2:
         st.write(f"### 📊 {c_month_name.upper()} COMPARISON")
         full_month_history = df[df['Mo_Num'] == c_month].groupby('Year')['km'].sum().reset_index()
@@ -201,7 +196,6 @@ if raw_data:
             fig2 = px.bar(seg2_data, x='km', y='Label', orientation='h')
             st.plotly_chart(format_horizontal_chart(fig2, '#F28C28'), use_container_width=True, config={'displayModeBar': False})
 
-    # 3. 6 MONTH TREND
     with col_chart3:
         st.write("### 📈 6 MONTH TREND")
         df['MP'] = df['Date'].dt.to_period('M')
@@ -213,7 +207,6 @@ if raw_data:
         fig3 = px.bar(trend, x='km', y='Month', orientation='h')
         st.plotly_chart(format_horizontal_chart(fig3, '#8e44ad'), use_container_width=True, config={'displayModeBar': False})
 
-    # 4. YEAR BY YEAR TO DATE
     with col_chart4:
         st.write(f"### ⏱️ PACING (UP TO {c_month_name.upper()} {c_day})")
         ytd_data = df[(df['Mo_Num'] < c_month) | ((df['Mo_Num'] == c_month) & (df['Day_Num'] <= c_day))]
@@ -225,54 +218,56 @@ if raw_data:
         else:
             st.write("No historical pacing data available.")
 
-
     # ==========================================
-    # DEEP DIVE ANALYTICS SECTION
+    # FULL-WIDTH YEAR-TO-DATE CUMULATIVE TRAJECTORY
     # ==========================================
     st.write("---")
-    st.write("### 🚀 DEEP DIVE: CUMULATIVE TRAJECTORY & HABITS")
+    st.write("### 🚀 YEAR-TO-DATE TRAJECTORY (CUMULATIVE KM)")
     
-    col_dd1, col_dd2 = st.columns([2, 1])
+    df_sorted = df.sort_values('Date')
+    df_sorted['Cumulative_KM'] = df_sorted.groupby('Year')['km'].cumsum()
     
-    with col_dd1:
-        # CUMULATIVE YTD LINE CHART
-        # Sort values chronologically, then calculate cumulative sum per year
-        df_sorted = df.sort_values('Date')
-        df_sorted['Cumulative_KM'] = df_sorted.groupby('Year')['km'].cumsum()
-        
-        fig_cum = px.line(df_sorted, x='Day_Of_Year', y='Cumulative_KM', color='Year', 
-                          title="Year-to-Date Form (Cumulative KM)",
-                          labels={'Day_Of_Year': 'Day of the Year', 'Cumulative_KM': 'Total KM Ridden'})
-        
-        fig_cum.update_layout(height=350, plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', hovermode="x unified")
-        fig_cum.update_xaxes(showgrid=True, gridcolor='#f0f0f0')
-        fig_cum.update_yaxes(showgrid=True, gridcolor='#f0f0f0')
-        st.plotly_chart(fig_cum, use_container_width=True, config={'displayModeBar': False})
+    # Custom dark color palette for high visibility
+    dark_colors = ['#1B2631', '#7B241C', '#1E8449', '#884EA0', '#B9770E', '#2874A6']
+    
+    fig_cum = px.line(df_sorted, x='Day_Of_Year', y='Cumulative_KM', color='Year', 
+                      color_discrete_sequence=dark_colors,
+                      labels={'Day_Of_Year': 'Day of the Year', 'Cumulative_KM': 'Total KM Ridden'})
+    
+    # Making lines much thicker
+    fig_cum.update_traces(line=dict(width=4))
+    
+    fig_cum.update_layout(height=450, plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', hovermode="x unified",
+                          legend=dict(title="Year", orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    fig_cum.update_xaxes(showgrid=True, gridcolor='#f0f0f0')
+    fig_cum.update_yaxes(showgrid=True, gridcolor='#f0f0f0')
+    st.plotly_chart(fig_cum, use_container_width=True, config={'displayModeBar': False})
 
-    with col_dd2:
-        # TIME OF DAY RADIAL/BAR CHART
+
+    # ==========================================
+    # TIME OF DAY & WEATHER OVERLAY
+    # ==========================================
+    st.write("---")
+    col_mid1, col_mid2 = st.columns([1, 2])
+    
+    with col_mid1:
+        st.write("### ⏰ PREFERRED RIDING TIMES")
         time_stats = df['Time_Of_Day'].value_counts().reset_index()
         time_stats.columns = ['Time', 'Rides']
         
-        fig_time = px.bar(time_stats, x='Rides', y='Time', orientation='h', title="Preferred Riding Times", text_auto=True)
-        fig_time.update_traces(marker_color='#e74c3c')
-        fig_time.update_layout(height=350, plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', xaxis=dict(visible=False))
+        fig_time = px.bar(time_stats, x='Rides', y='Time', orientation='h', text_auto=True)
+        fig_time.update_traces(marker_color='#e74c3c', textposition='outside')
+        fig_time.update_layout(height=250, margin=dict(l=0, r=20, t=10, b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', xaxis=dict(visible=False))
+        fig_time.update_yaxes(title="")
         st.plotly_chart(fig_time, use_container_width=True, config={'displayModeBar': False})
 
-
-    # ==========================================
-    # WEATHER & TOPOGRAPHY
-    # ==========================================
-    st.write("---")
-    col_w1, col_w2 = st.columns([2, 1])
-    
-    with col_w1:
-        st.write("### ⛅ WEATHER FOR NEXT 7 DAYS")
+    with col_mid2:
+        st.write("### ⛅ TORONTO WEATHER FOR NEXT 7 DAYS")
         try:
-            w_url = "https://api.open-meteo.com/v1/forecast?latitude=43.7&longitude=-79.4&daily=weathercode,temperature_2m_max,precipitation_sum&timezone=auto"
+            w_url = "https://api.open-meteo.com/v1/forecast?latitude=43.7&longitude=-79.4&daily=weathercode,temperature_2m_max,precipitation_sum&timezone=America%2FToronto"
             w_res = requests.get(w_url).json()['daily']
             
-            weather_html = '<div style="display: flex; gap: 10px; overflow-x: auto; padding-bottom: 10px;">'
+            weather_html = '<div style="display: flex; gap: 10px; overflow-x: auto; padding-bottom: 10px; height: 100%;">'
             for i in range(7):
                 d_name = datetime.datetime.strptime(w_res['time'][i], "%Y-%m-%d").strftime("%a")
                 tmp = w_res['temperature_2m_max'][i]
@@ -295,17 +290,6 @@ if raw_data:
         except:
             st.write("Weather update pending...")
 
-    with col_w2:
-        st.write("### ⛰️ EFFORT & TOPOGRAPHY")
-        total_elev = df['elev'].sum()
-        total_time_hrs = df['time'].sum() / 3600.0
-        lifetime_km = df['km'].sum()
-        
-        st.metric("Total Elevation Climbed", f"{total_elev:,.0f} meters", help="Total historical elevation gain")
-        st.metric("Total Time in Saddle", f"{total_time_hrs:,.0f} Hours", help="Total moving time")
-        st.metric("Lifetime Distance Logged", f"{lifetime_km:,.0f} km")
-
-
     # ==========================================
     # DISTRIBUTION GRAPH & ACTIVITY HEATMAP
     # ==========================================
@@ -313,7 +297,10 @@ if raw_data:
     col_bot1, col_bot2 = st.columns(2)
     
     with col_bot1:
-        st.write("### 🚲 TRIP DISTANCE DISTRIBUTION")
+        st.write("### 🚲 TRIP DISTANCE DISTRIBUTION (NUMBER OF RIDES)")
+        
+        # --- SIMPLIFIED HISTOGRAM ---
+        # Grouped by period, showing pure counts instead of confusing probability density
         dist_m = m_data[['km']].copy()
         dist_m['Period'] = f'{c_month_name} {c_year}'
         dist_y = y_data[['km']].copy()
@@ -321,28 +308,30 @@ if raw_data:
         
         dist_df = pd.concat([dist_m, dist_y])
         if not dist_df.empty:
-            fig_dist = px.histogram(dist_df, x='km', color='Period', barmode='overlay', 
-                                    nbins=30, histnorm='probability density', opacity=0.7,
+            fig_dist = px.histogram(dist_df, x='km', color='Period', barmode='group', 
+                                    nbins=15, opacity=0.85,
                                     color_discrete_sequence=['#F28C28', '#1f77b4'])
-            fig_dist.update_layout(height=350, plot_bgcolor='rgba(0,0,0,0)', xaxis_title="Trip Distance (km)", yaxis_title="Relative Frequency", legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99))
+            fig_dist.update_layout(
+                height=350, plot_bgcolor='rgba(0,0,0,0)', 
+                xaxis_title="Trip Distance (km)", 
+                yaxis_title="Number of Rides", 
+                legend_title="",
+                legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99)
+            )
+            fig_dist.update_xaxes(showgrid=True, gridcolor='#f0f0f0')
+            fig_dist.update_yaxes(showgrid=True, gridcolor='#f0f0f0')
             st.plotly_chart(fig_dist, use_container_width=True, config={'displayModeBar': False})
 
     with col_bot2:
-        st.write(f"### 🟩 {c_year} ACTIVITY HEATMAP")
-        # Creating a Day-of-Week vs Month heatmap for the current year
-        if not y_data.empty:
-            heatmap_data = y_data.groupby(['Day_Of_Week', 'Mo_Num'])['km'].sum().reset_index()
-            # Sort days logically
-            days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-            heatmap_data['Day_Of_Week'] = pd.Categorical(heatmap_data['Day_Of_Week'], categories=days_order, ordered=True)
-            
-            # Pivot table for the Heatmap
-            pivot_data = heatmap_data.pivot_table(index='Day_Of_Week', columns='Mo_Num', values='km', fill_value=0)
-            
-            fig_heat = px.imshow(pivot_data, labels=dict(x="Month (Numeric)", y="Day of Week", color="Total KM"),
-                                 color_continuous_scale="Greens", aspect="auto")
-            fig_heat.update_layout(height=350, plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
-            st.plotly_chart(fig_heat, use_container_width=True, config={'displayModeBar': False})
+        st.write("### ⛰️ EFFORT & TOPOGRAPHY")
+        total_elev = df['elev'].sum()
+        total_time_hrs = df['time'].sum() / 3600.0
+        lifetime_km = df['km'].sum()
+        longest_ride = df['km'].max()
+        
+        st.metric("Total Elevation Climbed", f"{total_elev:,.0f} meters", help="Total historical elevation gain")
+        st.metric("Total Time in Saddle", f"{total_time_hrs:,.0f} Hours", help="Total moving time")
+        st.metric("Longest Single Ride Ever", f"{longest_ride:,.1f} km")
 
 elif not error_msg:
     st.warning("Awaiting connection to RidewithGPS... Click the 'Force Refresh' button above!")
